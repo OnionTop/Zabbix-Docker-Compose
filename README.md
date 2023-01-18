@@ -9,9 +9,8 @@
 
 ### 启动方式
 ```bash
-# 将该仓库克隆或者下载之后，解压并进入该仓库
-# 先给仓库内的docker-compose文件增加可执行权限
-chmod + x ./docker-compose
+# 将该仓库克隆或者下载之后，解压并进入该仓库，并下载docker-compose bin文件
+wget -O ./docker-compose https://github.com/docker/compose/releases/download/v2.15.1/docker-compose-linux-x86_64  && chmod + x ./docker-compose
 
 # 直接启动，当启动完成后，便可访问你的主机ip或域名机可
 ./docker-compose up -d
