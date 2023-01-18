@@ -1,0 +1,109 @@
+version: '3'
+services:
+  # zabbix server配置
+  server-mysql:
+    hostname: zabbix-server-mysql
+    image: zabbix/zabbix-server-mysql:ubuntu-6.0-latest
+    restart: unless-stopped
+    # zabbix server的监听端口，这里原样映射出来了，如果你想指定自定义端口可以更改此处映射
+    ports:
+      - 10051:10051
+    # 将容器内zabbix server配置文件映射至主机，如果不想通过环境变量更改配置，可以直接更改配置文件然后重启容器即可
+    # 如需直接更改配置文件，可打开下方注释
+    #volumes:
+      #- ./server_conf/zabbix_server.conf:/etc/zabbix/zabbix_server.conf
+    environment:
+      # 改为自己的MySQL root密码，这里使用docker创建了MySQL数据库，如果已有MySQL，可以直接删除service.db节点，然后配置自己的MySQL信息
+      MYSQL_ROOT_PASSWORD: mysql_passwd
+      # MySQL ip，域名，或主机名
+      DB_SERVER_HOST: mysql_host
+      # MySQL端口
+      DB_SERVER_PORT: 3306
+      # 数据库用户名
+      MYSQL_USER: DB_User
+      # 数据库密码
+      MYSQL_PASSWORD: DB_Username
+      # 数据库名称
+      MYSQL_DATABASE: DB_Passwd
+    # 容器网络，这里自定义了桥接的容器网络，关闭了ipv6支持
+    networks:
+      - zabbix_net
+    # 将此zabbix server连接至MySQL和zabbix-agent容器，以便通过容器名称进行容器间通信。
+    # 这里增加了zabbix-agent的容器，是因为zabbix的docker镜像默认不包含zabbox-agent客户端，所以要另起一个zabbix-agent客户端容器，来保证zabbix可以监控宿主机状态
+    links:
+      - db:mysql
+      - agent:zabbix-agent
+    # 这里等待db启动完成之后再启动该容器，此配置可以直接忽略
+    # 如果机器性能不足，要观察一下zabbix server初始化数据库的进度，等待zabbix数据库初始化完成后再进行下一步配置
+    # 如果在数据库初始化完成之前就打开web页面会报各种奇奇怪怪的错误，原因就是因为数据库未完成初始化，部分表或者数据还是残缺状态
+    depends_on:
+      - db
+  # zabbix web前端服务配置，绝大部分配置与zabbix server配置相近或相同，可参考上方注释自行修改
+  web-nginx-mysql:
+    hostname: zabbix-web
+    image: zabbix/zabbix-web-nginx-mysql:ubuntu-6.0-latest
+    restart: unless-stopped
+    ports:
+      - 80:8080
+    # 将web内的字体文件映射至宿主机，这样可以直接在宿主机上更改字体文件，防止zabbix中文显示异常
+    # 此仓库内的字体已经更改为微软雅黑字体，如果想自定义其它字体可任意更改
+    volumes:
+      - ./web_conf/fonts:/usr/share/zabbix/assets/fonts
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql_passwd
+      # zabbix web服务这里要指定zabbix server的地址，否则web页面会提示zabbix server未运行
+      ZBX_SERVER_HOST: zabbix-server-mysql
+      DB_SERVER_HOST: mysql_host
+      DB_SERVER_PORT: 3306
+      MYSQL_USER: DB_User
+      MYSQL_PASSWORD: DB_Username
+      MYSQL_DATABASE: DB_Passwd
+    networks:
+      - zabbix_net
+    links:
+      - db:mysql
+      - server-mysql:zabbix-server-mysql
+    depends_on:
+      - db
+      - server-mysql
+  # zabbix-agent客户端配置
+  agent:
+    hostname: zabbix-agent
+    image: zabbix/zabbix-agent:ubuntu-6.0-latest
+    restart: always
+    privileged: true
+    networks:
+      - zabbix_net
+    # 将agent配置文件映射至宿主机，方便手动更改，然后单独重启agent容器即可
+    volumes:
+      - ./zabbix_agentd.conf:/etc/zabbix/zabbix_agentd.conf
+     # 如果需要将容器的端口映射至主机，然后用别的zabbix监控这台服务器的话，可以打开下方注释
+#    ports:
+#      - 10050:10050
+    environment:
+      ZBX_HOSTNAME: "Zabbix server"
+      ZBX_SERVER_HOST: zabbix-server-mysql
+      ZBX_LISTENPORT: 10050
+  # 数据库配置，因为这个数据库不要对外提供服务，所以也没有映射其服务端口给宿主机
+  db:
+    hostname: mysql
+    image: mysql:8.0.31
+    restart: always
+    volumes:
+      - ./db_data:/var/lib/mysql
+    # 这行配置尽量别动，因为zabbix需要特定的字符编码和排序规则
+    # mysql8的默认身份认证插件为caching_sha2_password，但是目前各个系统对该插件的支持还不太好，容易导致数据库连接不上，所以这里也改成以前mysql 5.7的mysql_native_password
+    command: ['mysqld','--character-set-server=utf8','--collation-server=utf8_bin','--default-authentication-plugin=mysql_native_password']
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql_passwd
+      MYSQL_USER: DB_User
+      MYSQL_PASSWORD: DB_Username
+      MYSQL_DATABASE: DB_Passwd
+    networks:
+      - zabbix_net
+# 容器网络配置，依然是默认的桥接网络
+networks:
+    zabbix_net:
+      driver: bridge
+      driver_opts:
+        com.docker.network.enable_ipv6: "false"
